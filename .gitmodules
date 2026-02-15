@@ -1,0 +1,3 @@
+[submodule "src/api/proto"]
+	path = src/api/proto
+	url = https://github.com/ehsanshah/empire-protos.git

@@ -1,105 +1,141 @@
 package domain
 
 import (
+	"errors"
 	"time"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// وضعیت‌های ممکن برای کمپین
-type CampaignStatus string
-
+// وضعیت‌های کمپین (بر اساس لاجیک شما)
 const (
-	STATUS_DRAFT     CampaignStatus = "draft"
-	STATUS_SCHEDULED CampaignStatus = "scheduled"
-	STATUS_SENDING   CampaignStatus = "sending"
-	STATUS_PAUSED    CampaignStatus = "paused"
-	STATUS_COMPLETED CampaignStatus = "completed"
-	STATUS_CANCELLED CampaignStatus = "cancelled"
-	STATUS_FAILED    CampaignStatus = "failed"
+	StatusDraft      = "DRAFT"
+	StatusScheduled  = "SCHEDULED"
+	StatusProcessing = "PROCESSING"
+	StatusSent       = "SENT"
+	StatusCancelled  = "CANCELLED"
+	StatusFailed     = "FAILED"
 )
 
-// انواع کمپین
-type CampaignType string
+// Campaign: مدل اصلی دقیقاً منطبق با message Campaign در پروتو
 
-const (
-	TYPE_REGULAR       CampaignType = "regular"
-	TYPE_AUTOMATED     CampaignType = "automated"
-	TYPE_AB_TEST       CampaignType = "ab_test"
-	TYPE_TRIGGERED     CampaignType = "triggered"
-	TYPE_TRANSACTIONAL CampaignType = "transactional"
-)
-
-// مدل سگمنت کمپین
-type CampaignSegment struct {
-	SegmentID         string                 `bson:"segment_id" json:"segment_id"`
-	SegmentName       string                 `bson:"segment_name" json:"segment_name"`
-	FilterCriteria    map[string]interface{} `bson:"filter_criteria,omitempty" json:"filter_criteria,omitempty"`
-	EstimatedCount    int                    `bson:"estimated_count" json:"estimated_count"`
-	ListIDs           []string               `bson:"list_ids,omitempty" json:"list_ids,omitempty"`
-	IncludeSegmentIDs []string               `bson:"include_segment_ids,omitempty" json:"include_segment_ids,omitempty"`
-	ExcludeSegmentIDs []string               `bson:"exclude_segment_ids,omitempty" json:"exclude_segment_ids,omitempty"`
-}
-
-// تنظیمات کمپین
-type CampaignSettings struct {
-	OpenTracking        bool      `bson:"open_tracking" json:"open_tracking"`
-	ClickTracking       bool      `bson:"click_tracking" json:"click_tracking"`
-	Sandbox             bool      `bson:"sandbox" json:"sandbox"`
-	InlineCss           bool      `bson:"inline_css" json:"inline_css"`
-	IpPool              string    `bson:"ip_pool" json:"ip_pool"`
-	UnsubscribeTracking bool      `bson:"unsubscribe_tracking" json:"unsubscribe_tracking"`
-	GoogleAnalytics     bool      `bson:"google_analytics" json:"google_analytics"`
-	UTMParameters       UTMParams `bson:"utm_parameters" json:"utm_parameters"`
-}
-
-// پارامترهای UTM برای ردیابی
-type UTMParams struct {
-	Source   string `bson:"source" json:"source"`
-	Medium   string `bson:"medium" json:"medium"`
-	Campaign string `bson:"campaign" json:"campaign"`
-	Term     string `bson:"term" json:"term"`
-	Content  string `bson:"content" json:"content"`
-}
-
-// مدل اصلی کمپین
 type Campaign struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	ClientID    primitive.ObjectID `bson:"client_id" json:"client_id"`
-	Name        string             `bson:"name" json:"name"`
-	Description string             `bson:"description" json:"description"`
-	Type        CampaignType       `bson:"type" json:"type"`
-	Status      CampaignStatus     `bson:"status" json:"status"`
-	Token       string             `bson:"token" json:"token"`
+	ID        string `json:"id" db:"id"`
+	AccountID string `json:"account_id" db:"account_id"`
+	Name      string `json:"name" db:"name"`
+	Status    string `json:"status" db:"status"`
 
-	// زمان‌بندی
-	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
-	ScheduledAt time.Time `bson:"scheduled_at" json:"scheduled_at"`
-	SentAt      time.Time `bson:"sent_at" json:"sent_at"`
-	CompletedAt time.Time `bson:"completed_at" json:"completed_at"`
-	Timezone    string    `bson:"timezone" json:"timezone"`
+	TypeForHumans string `json:"type_for_humans" db:"type_for_humans"`
+
+	// اشیاء تو در تو (Nested Objects) که در دیتابیس Postgres به صورت JSONB ذخیره می‌شوند
+	Recipients CampaignRecipient `json:"recipients" db:"-"` // db:- یعنی مستقیم مپ نمیشه، در Repository هندل میشه
+	Options    CampaignOptions   `json:"options" db:"-"`
+	Stats      CampaignStats     `json:"stats" db:"-"`
+
+	// فیلترها (آرایه‌ای از شرط‌ها)
+	Filters []FilterCondition `json:"filters" db:"-"`
+
+	// زمان‌بندی‌ها
+	CreatedAt        time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at" db:"updated_at"`
+	ScheduledFor     *time.Time `json:"scheduled_for" db:"scheduled_for"` // Pointer for nullable
+	QueuedAt         *time.Time `json:"queued_at" db:"queued_at"`
+	StartedAt        *time.Time `json:"started_at" db:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at" db:"finished_at"`
+	StoppedAt        *time.Time `json:"stopped_at" db:"stopped_at"`
+	WinnerSelectedAt *time.Time `json:"winner_selected_at" db:"winner_selected_at"`
+
+	// فلگ‌های کنترلی
+	IsStopped          bool `json:"is_stopped" db:"is_stopped"`
+	IsCurrentlySending bool `json:"is_currently_sending_out" db:"is_currently_sending_out"`
+	CanBeScheduled     bool `json:"can_be_scheduled" db:"can_be_scheduled"`
+	HasWinner          bool `json:"has_winner" db:"has_winner"`
+
+	// اطلاعات A/B Test و خروجی انسانی
+	WinnerVersionForHuman      string `json:"winner_version_for_human" db:"winner_version_for_human"`
+	WinnerSendingTimeForHumans string `json:"winner_sending_time_for_humans" db:"winner_sending_time_for_humans"`
 
 	// محتوا
-	MessageID    primitive.ObjectID `bson:"message_id" json:"message_id"`
-	Subject      string             `bson:"subject" json:"subject"`
-	PreHeader    string             `bson:"pre_header" json:"pre_header"`
-	SenderName   string             `bson:"sender_name" json:"sender_name"`
-	SenderEmail  string             `bson:"sender_email" json:"sender_email"`
-	ReplyToEmail string             `bson:"reply_to_email" json:"reply_to_email"`
+	EmailIDs       []string `json:"email_ids" db:"email_ids"` // Postgres Array
+	DefaultEmailID string   `json:"default_email_id" db:"default_email_id"`
 
-	// مخاطبین
-	SegmentIDs      []string  `bson:"segment_ids" json:"segment_ids"`
-	ListIDs         []string  `bson:"list_ids" json:"list_ids"`
-	ExcludedListIDs []string  `bson:"excluded_list_ids" json:"excluded_list_ids"`
-	TestEmails      []string  `bson:"test_emails" json:"test_emails"`
-	Messages        []Message `bson:"messages" json:"messages"` // پیام‌های مرتبط با این کمپین
-	// تنظیمات
-	Settings   CampaignSettings  `bson:"settings" json:"settings"`
-	Categories []string          `bson:"categories" json:"categories"`
-	Tags       []string          `bson:"tags" json:"tags"`
-	Segments   []CampaignSegment `bson:"segments" json:"segments"` // سگمنت‌های مخاطبان این کمپین
+	Warnings []string `json:"warnings" db:"warnings"`
 
-	// آمار
-	//Statistics      CampaignStats      `bson:"statistics" json:"statistics"`
+	UsedInAutomations bool           `json:"used_in_automations" db:"used_in_automations"`
+	ExtraFields       map[string]any `json:"extra_fields" db:"-"` // JSONB
+}
+
+// ---------------------------------------------
+// مدل‌های زیرمجموعه (Sub-structs)
+// ---------------------------------------------
+
+type CampaignRecipient struct {
+	ListIDs      []string `json:"list_ids"`
+	SegmentIDs   []string `json:"segment_ids"`
+	ListNames    []string `json:"list_names"`
+	SegmentNames []string `json:"segment_names"`
+}
+
+type CampaignOptions struct {
+	DeliveryOptimization string `json:"delivery_optimization"`
+	TrackOpens           bool   `json:"track_opens"`
+	TrackClicks          bool   `json:"track_clicks"`
+	UseGoogleAnalytics   bool   `json:"use_google_analytics"`
+	EcommerceTracking    bool   `json:"ecommerce_tracking"`
+	TriggerFrequency     int32  `json:"trigger_frequency"`
+	TriggerCount         int32  `json:"trigger_count"`
+	UsesSurvey           bool   `json:"uses_survey"`
+}
+
+type FilterCondition struct {
+	Operator string `json:"operator"`
+	Args     []any  `json:"args"` // نگاشت google.protobuf.Value
+}
+
+// StatsRate مدل کمکی برای نرخ‌ها (طبق فایل پروتو: double float, string string)
+type StatsRate struct {
+	Float  float64 `json:"float"`  // نام فیلد در پروتو float بود
+	String string  `json:"string"` // نام فیلد در پروتو string بود
+}
+
+type CampaignStats struct {
+	Sent             int64     `json:"sent"`
+	OpensCount       int64     `json:"opens_count"`
+	UniqueOpensCount int64     `json:"unique_opens_count"`
+	OpenRate         StatsRate `json:"open_rate"`
+
+	ClicksCount       int64     `json:"clicks_count"`
+	UniqueClicksCount int64     `json:"unique_clicks_count"`
+	ClickRate         StatsRate `json:"click_rate"`
+
+	UnsubscribesCount int64     `json:"unsubscribes_count"`
+	UnsubscribeRate   StatsRate `json:"unsubscribe_rate"`
+
+	SpamCount int64     `json:"spam_count"`
+	SpamRate  StatsRate `json:"spam_rate"`
+
+	HardBouncesCount int64     `json:"hard_bounces_count"`
+	HardBounceRate   StatsRate `json:"hard_bounce_rate"`
+
+	SoftBouncesCount int64     `json:"soft_bounces_count"`
+	SoftBounceRate   StatsRate `json:"soft_bounce_rate"`
+
+	DeliveryRate float64 `json:"delivery_rate"`
+}
+
+// ---------------------------------------------
+// منطق‌های دامین (Domain Logic)
+// ---------------------------------------------
+
+// ValidateTransition بررسی می‌کند آیا تغییر وضعیت مجاز است؟
+func (c *Campaign) ValidateTransition(newStatus string) error {
+	// قوانین ساده شده برای شروع:
+	if c.IsStopped && newStatus == StatusProcessing {
+		return errors.New("cannot restart a stopped campaign directly")
+	}
+
+	// نمی‌توان کمپین تکمیل شده را دوباره درفت کرد
+	if c.Status == StatusSent && newStatus == StatusDraft {
+		return errors.New("cannot revert sent campaign to draft")
+	}
+
+	return nil
 }

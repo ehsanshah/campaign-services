@@ -1,0 +1,21 @@
+server:
+  address: "0.0.0.0"
+  port: "8080"
+
+grpc:
+  address: "0.0.0.0"
+  port: "50050"
+
+# 🔴 نکته حیاتی: نام این کلید باید با mapstructure در فایل config.go یکی باشد
+postgresdb:
+  host: "localhost"
+  port: 5434            # 👈 پورت اکسترنال داکر شما
+  user: "campaign_user"       # 👈 ست شده در Docker Env
+  password: "campaign_pass"   # 👈 ست شده در Docker Env
+  dbname: "campaign_db"
+  sslmode: "disable"
+
+  # تنظیمات Connection Pool
+  max_conns: 10
+  min_conns: 2
+  max_conn_lifetime: "1h"
